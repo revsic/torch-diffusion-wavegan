@@ -63,12 +63,15 @@ class TrainingWrapper:
             [n[s:s + seglen] for n, s in zip(speech, start)])
         return [mel, speech]
 
-    def loss_discriminator(self, bunch: List[np.ndarray]) \
+    def loss_discriminator(self, mel: torch.Tensor, speech: torch.Tensor) \
             -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Compute the discriminator loss.
+        Args:
+            mel: [torch.float32; [B, S, M]], segmented spectrogram.
+            speech: [torch.float32; [B, S x H]], segmented speech.
+        Returns:
+            loss and disctionaries.
         """
-        # [B, S, mel], [B, S x H]
-        mel, speech = self.wrap(self.random_segment(bunch))
         # [B], zero-based
         steps = torch.randint(
             self.config.model.steps, (mel.shape[0],), device=mel.device)
@@ -97,16 +100,24 @@ class TrainingWrapper:
         loss_g = torch.square(disc_pred).mean()
         # least square loss
         loss = loss_d + loss_g
-        return loss, {
+        losses = {
             'dloss': loss.item(),
             'dloss_d': loss_d.item(), 'dloss_g': loss_g.item()}
+        return loss, losses, {
+            'gt': gt.cpu().detach().numpy(),
+            'prev': prev.cpu().detach().numpy(),
+            'denoised': denoised.cpu().detach().numpy(),
+            'pred': pred.cpu().detach().numpy()}
 
-    def loss_generator(self, bunch: List[np.ndarray]) \
+    def loss_generator(self, mel: torch.Tensor, speech: torch.Tensor) \
             -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Compute the generator loss.
+        Args:
+            mel: [torch.float32; [B, S, M]], segmented spectrogram.
+            speech: [torch.float32; [B, S x H]], segmented speech.
+        Returns:
+            loss and disctionaries.
         """
-        # [B, S, mel], [B, S x H]
-        mel, speech = self.wrap(self.random_segment(bunch))
         # [B], zero-based
         steps = torch.randint(
             self.config.model.steps, (mel.shape[0],), device=mel.device)
@@ -124,4 +135,8 @@ class TrainingWrapper:
         disc_pred = self.disc(pred, gt, steps)
         # []
         loss = torch.square(disc_pred - 1.).mean()
-        return loss, {'gloss': loss.item()}
+        losses = {'gloss': loss.item()}
+        return loss, losses, {
+            'gt': gt.cpu().detach().numpy(),
+            'denoised': denoised.cpu().detach().numpy(),
+            'pred': pred.cpu().detach().numpy()}
