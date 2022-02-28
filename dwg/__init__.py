@@ -52,7 +52,7 @@ class DiffusionWaveGAN(nn.Module):
             nn.ReLU(),
             nn.utils.weight_norm(nn.Conv1d(config.channels, 1, 1)))
         # [S + 1], 0 ~ S
-        self.register_buffer('betas', config.betas())
+        self.register_buffer('betas', torch.tensor(config.betas(), dtype=torch.float32))
         self.register_buffer('alphas', 1. - self.betas)
         self.register_buffer('alphas_bar', torch.cumprod(self.alphas, dim=-1))
 
@@ -71,10 +71,10 @@ class DiffusionWaveGAN(nn.Module):
             [torch.float32; [B, T]], generated waveform.
             [np.float32; [B, T]], intermediate representations.
         """
+        factor = np.prod(self.upsampler.scales)
         # [B, T]
         signal = signal or torch.randn(
-            mel.shape[0], mel.shape[-1] * np.prod(self.config.upscales),
-            device=mel.device)
+            mel.shape[0], mel.shape[1] * factor, device=mel.device)
         latent = latent or torch.randn_like(signal)
         # S x [B, T]
         ir = [signal.cpu().detach().numpy()]
@@ -108,11 +108,11 @@ class DiffusionWaveGAN(nn.Module):
             # [B], one-based sample
             beta = self.betas[steps + 1]
             # [B, T], [B]
-            return (1. - beta[None]).sqrt() * signal, beta.sqrt()
+            return (1. - beta[:, None]).sqrt() * signal, beta.sqrt()
         # [B], one-based sample
         alpha_bar = self.alphas_bar[steps + 1]
         # [B, T], [B]
-        return alpha_bar.sqrt() * signal, (1 - alpha_bar).sqrt()
+        return alpha_bar[:, None].sqrt() * signal, (1 - alpha_bar).sqrt()
 
     def inverse(self,
                 signal: torch.Tensor,
@@ -134,10 +134,10 @@ class DiffusionWaveGAN(nn.Module):
         # [B], make one-based
         prev, steps = steps, steps + 1
         # [B, T]
-        mean = self.alphas_bar[prev].sqrt() * self.betas[steps] / (
-                1 - self.alphas_bar[steps]) * denoised + \
-            self.alphas[steps].sqrt() * (1. - self.alphas_bar[prev]) / (
-                1 - self.alphas_bar[steps]) * signal
+        mean = self.alphas_bar[prev, None].sqrt() * self.betas[steps, None] / (
+                1 - self.alphas_bar[steps, None]) * denoised + \
+            self.alphas[steps, None].sqrt() * (1. - self.alphas_bar[prev, None]) / (
+                1 - self.alphas_bar[steps, None]) * signal
         # [B]
         var = (1 - self.alphas_bar[prev]) / (
             1 - self.alphas_bar[steps]) * self.betas[steps]
@@ -164,15 +164,14 @@ class DiffusionWaveGAN(nn.Module):
         # [B, E]
         embed = self.embedder(steps)
         # L x [B, C, T]
-        skips = []
+        skips = 0.
         for block in self.blocks:
             # [B, C, T], [B, C, T]
             x, skip = block(x, embed, mel)
-            skips.append(skip)
+            skips = skips + skip
         # [B, T]
         return self.proj_out(
-                torch.sum(skips, dim=1) * (len(self.blocks) ** -0.5)
-            ).squeeze(dim=1)
+                skips * (len(self.blocks) ** -0.5)).squeeze(dim=1)
 
     def save(self, path: str, optim: Optional[torch.optim.Optimizer] = None):
         """Save the models.

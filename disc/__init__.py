@@ -16,6 +16,7 @@ class Discriminator(nn.Module):
         Args:
             config: model configurations.
         """
+        super().__init__()
         self.proj_signal = nn.utils.weight_norm(
             nn.Conv1d(2, config.channels, 1))
         self.embedder = nn.Sequential(
