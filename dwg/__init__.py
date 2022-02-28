@@ -1,5 +1,6 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -18,6 +19,7 @@ class DiffusionWaveGAN(nn.Module):
             config: model configurations.
         """
         super().__init__()
+        self.steps = config.steps
         self.proj_signal = nn.utils.weight_norm(
             nn.Conv1d(1, config.channels, 1))
         self.proj_latent = nn.Sequential(
@@ -49,18 +51,81 @@ class DiffusionWaveGAN(nn.Module):
             nn.utils.weight_norm(nn.Conv1d(config.channels, config.channels, 1)),
             nn.ReLU(),
             nn.utils.weight_norm(nn.Conv1d(config.channels, 1, 1)))
+        # [S + 1], 0 ~ S
+        self.register_buffer('betas', config.betas())
+        self.register_buffer('alphas', 1. - self.betas)
+        self.register_buffer('alphas_bar', torch.cumprod(self.alphas, dim=-1))
+
+    def forward(self,
+                mel: torch.Tensor,
+                signal: Optional[torch.Tensor] = None,
+                latent: Optional[torch.Tensor] = None,
+                sample: bool = True) -> torch.Tensor:
+        """Generated waveform conditioned on mel-spectrogram.
+        Args:
+            mel: [torch.float32; [B, mel, T / prod(scales)]], mel-spectrogram.
+            signal: [torch.float32; [B, T]], initial noise.
+            latent: [torch.float32; [B, T]], provided latent variable.
+            sample: whether sample the inverse process or not.
+        Returns:
+            [torch.float32; [B, T]], generated waveform.
+        """
+        # [B, T]
+        signal = signal or torch.randn(
+            mel.shape[0], mel.shape[-1] * np.prod(self.config.upscales),
+            device=mel.device)
+        latent = latent or torch.randn_like(signal)
+        # zero-based step
+        for step in range(self.steps - 1, -1, -1):
+            # [B, T], [B]
+            mean, std = self.inverse(
+                signal, latent, mel, torch.tensor([step], device=mel.device))
+            # [B, T]
+            signal = mean + torch.randn_like(mean) * std[:, None] \
+                if sample else mean
+        # [B, T]
+        return signal
+
+    def inverse(self,
+                signal: torch.Tensor,
+                latent: torch.Tensor,
+                mel: torch.Tensor,
+                steps: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Inverse process, single step denoise.
+        Args:
+            signal: [torch.float32; [B, T]], input signal.
+            latent: [torch.float32; [B, T]], latent variable.
+            mel: [torch.float32; [B, mel, T / prod(scales)]], mel-spectrogram.
+            steps: [torch.long; [B]], diffusion steps, zero-based.
+        Returns:
+            [torch.float32; [B, T]], waveform mean.
+            [torch.float32; [B]], waveform std.
+        """
+        # [B, T]
+        denoised = self.denoise(signal, latent, mel, steps)
+        # [B], make one-based
+        prev, steps = steps, steps + 1
+        # [B, T]
+        mean = self.alphas_bar[prev].sqrt() * self.betas[steps] / (
+                1 - self.alphas_bar[steps]) * denoised + \
+            self.alphas[steps].sqrt() * (1. - self.alphas_bar[prev]) / (
+                1 - self.alphas_bar[steps]) * signal
+        # [B]
+        var = (1 - self.alphas_bar[prev]) / (
+            1 - self.alphas_bar[steps]) * self.betas[steps]
+        return mean, var.sqrt()
 
     def denoise(self,
                 signal: torch.Tensor,
                 latent: torch.Tensor,
                 mel: torch.Tensor,
                 steps: torch.Tensor) -> torch.Tensor:
-        """Denoised waveform conditioned on mel-spectrogram.
+        """Denoise waveform conditioned on mel-spectrogram.
         Args:
             signal: [torch.float32; [B, T]], input signal.
             latent: [torch.float32; [B, T]], latent variable.
             mel: [torch.float32; [B, mel, T / prod(scales)]], mel-spectrogram.
-            steps: [torch.long; [B]], diffusion steps.
+            steps: [torch.long; [B]], diffusion steps, zero-based.
         Returns:
             [torch.float32; [B, T]], denoised waveform. 
         """

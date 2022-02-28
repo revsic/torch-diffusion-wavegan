@@ -1,3 +1,6 @@
+import numpy as np
+
+
 class Config:
     """DiffusionWaveGAN configurations.
     """
@@ -10,6 +13,10 @@ class Config:
 
         # diffusion steps
         self.steps = 4
+
+        # schedules
+        self.beta_max = 20
+        self.beta_min = 0.1
 
         # block
         self.channels = 64
@@ -34,3 +41,15 @@ class Config:
         # wavenet
         self.cycles = 3
         self.layers = 10
+
+    def betas(self) -> np.ndarray:
+        """Beta values.
+        """
+        steps = np.arange(1, self.steps + 1)
+        # [S]
+        betas = 1 - np.exp(
+            -self.beta_min / self.steps - 0.5 * (
+                self.beta_max - self.beta_min
+            ) * (2 * steps - 1) * self.steps ** 2)
+        # [S + 1]
+        return np.concatenate([[0.], betas])
