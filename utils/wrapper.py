@@ -50,8 +50,8 @@ class TrainingWrapper:
         """
         # [B, T, mel], [B, T x H], [B], [B]
         mel, speech, mellen, _ = bunch
-        # [B], plus one for open interval 
-        start = np.random.randint(mellen - self.config.train.seglen + 1)
+        # [B]
+        start = np.random.randint(mellen - self.config.train.seglen)
         # [B, S, mel]
         mel = np.array(
             [m[s:s + self.config.train.seglen] for m, s in zip(mel, start)])
