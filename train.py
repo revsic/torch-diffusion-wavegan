@@ -13,6 +13,7 @@ import speechset
 from config import Config
 from disc import Discriminator
 from dwg import DiffusionWaveGAN
+from speechset.utils.melstft import MelSTFT
 from utils.wrapper import TrainingWrapper
 
 
@@ -53,7 +54,6 @@ class Trainer:
         self.testloader = torch.utils.data.DataLoader(
             self.testset,
             batch_size=config.train.batch,
-            shuffle=config.train.shuffle,
             collate_fn=self.dataset.collate,
             num_workers=config.train.num_workers,
             pin_memory=config.train.pin_memory)
@@ -64,14 +64,12 @@ class Trainer:
         self.optim_g = torch.optim.Adam(
             self.model.parameters(),
             config.train.learning_rate,
-            (config.train.beta1, config.train.beta2),
-            config.train.eps)
+            (config.train.beta1, config.train.beta2))
 
         self.optim_d = torch.optim.Adam(
             self.disc.parameters(),
             config.train.learning_rate,
-            (config.train.beta1, config.train.beta2),
-            config.train.eps)
+            (config.train.beta1, config.train.beta2))
 
         self.train_log = SummaryWriter(
             os.path.join(config.train.log, config.train.name, 'train'))
@@ -81,6 +79,7 @@ class Trainer:
         self.ckpt_path = os.path.join(
             config.train.ckpt, config.train.name, config.train.name)
 
+        self.melspec = MelSTFT(config.data)
         self.cmap = np.array(plt.get_cmap('viridis').colors)
 
     def train(self, epoch: int = 0):
@@ -127,7 +126,9 @@ class Trainer:
                     self.train_log.add_scalar('common/grad-norm', grad_norm, step)
                     self.train_log.add_scalar('common/param-norm', param_norm, step)
                     self.train_log.add_scalar(
-                        'common/learning-rate', self.optim.param_groups[0]['lr'], step)
+                        'common/learning-rate-g', self.optim_g.param_groups[0]['lr'], step)
+                    self.train_log.add_scalar(
+                        'common/learning-rate-d', self.optim_d.param_groups[0]['lr'], step)
 
                     if (it + 1) % (len(self.loader) // 50) == 0:
                         speech = speech[Trainer.LOG_IDX].cpu().numpy()
@@ -136,16 +137,16 @@ class Trainer:
                             'train/gt', self.mel_img(speech), step)
                         self.train_log.add_image(
                             # [3, M, T]
-                            'train/q(z_{t}|z_{0})', self.mel_img(aux_d['gt']), step)
+                            'train/q(z_{t}|z_{0})', self.mel_img(aux_d['gt'][Trainer.LOG_IDX]), step)
                         self.train_log.add_image(
                             # [3, M, T]
-                            'train/q(z_{t-1}|z_{t})', self.mel_img(aux_d['prev']), step)
+                            'train/q(z_{t-1}|z_{t})', self.mel_img(aux_d['prev'][Trainer.LOG_IDX]), step)
                         self.train_log.add_image(
                             # [3, M, T]
-                            'train/p(z_{0}|z_{t})', self.mel_img(aux_d['denoised']), step)
+                            'train/p(z_{0}|z_{t})', self.mel_img(aux_d['denoised'][Trainer.LOG_IDX]), step)
                         self.train_log.add_image(
                             # [3, M, T]
-                            'train/q(z_{t-1}|z_{0})', self.mel_img(aux_d['pred']), step)
+                            'train/q(z_{t-1}|z_{0})', self.mel_img(aux_d['pred'][Trainer.LOG_IDX]), step)
 
             losses = {
                 key: [] for key in {**losses_d, **losses_g}}
@@ -159,7 +160,7 @@ class Trainer:
                         losses[key].append(val)
                 # test log
                 for key, val in losses.items():
-                    self.test_log.add_scalar(f'loss/{key}', np.mean(val).items(), step)
+                    self.test_log.add_scalar(f'loss/{key}', np.mean(val), step)
 
                 self.model.eval()
                 # wrap last bunch
@@ -177,14 +178,15 @@ class Trainer:
                     self.mel_img(ir[0].squeeze(0)), step)
                 self.test_log.add_audio(
                     f'test/z_{{{self.config.model.steps}}}', 
-                    ir[0], step, sample_rate=self.dataset.reader.SR)
+                    ir[0], step, sample_rate=self.config.data.sr)
 
                 for i, signal in enumerate(ir[1:][::-1]):
                     self.test_log.add_image(
-                        f'test/p(z_{{{i}}}|z_{{{i + 1}}}))', self.mel_img(signal), step)
+                        f'test/p(z_{{{i}}}|z_{{{i + 1}}}))',
+                        self.mel_img(signal.squeeze(0)), step)
                     self.test_log.add_audio(
                         f'test/p(z_{{{i}}}|z_{{{i + 1}}}))', signal, step,
-                        sample_rate=self.dataset.reader.SR)
+                        sample_rate=self.config.data.sr)
 
                 self.model.train()
 
@@ -199,7 +201,7 @@ class Trainer:
             [float32; [3, M, T]], mel-spectrogram in viridis color map.
         """
         # [T, M]
-        mel = self.dataset.melstft(signal)
+        mel = self.melspec(signal)
         # minmax norm in range(0, 1)
         mel = (mel - mel.min()) / (mel.max() - mel.min())
         # in range(0, 255)

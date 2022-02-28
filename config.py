@@ -21,16 +21,16 @@ class TrainConfig:
         self.split = 13000
 
         # loader settings
-        self.batch = 32
+        self.batch = 8
         self.shuffle = True
         self.num_workers = 4
         self.pin_memory = True
 
         # train iters
-        self.epoch = 100
+        self.epoch = 1000
 
         # segment length
-        self.seglen = int(sr * 0.5) // hop * hop
+        self.seglen = int(sr * 0.5) // hop
 
         # path config
         self.log = './log'
