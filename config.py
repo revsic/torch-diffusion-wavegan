@@ -17,6 +17,9 @@ class TrainConfig:
         self.beta1 = 0.9
         self.beta2 = 0.999
 
+        # 13000:100
+        self.split = 13000
+
         # loader settings
         self.batch = 32
         self.shuffle = True
