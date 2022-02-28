@@ -80,3 +80,24 @@ class DiffusionWaveGAN(nn.Module):
         return self.proj_out(
                 torch.sum(skips, dim=1) * (len(self.blocks) ** -0.5)
             ).squeeze(dim=1)
+
+    def save(self, path: str, optim: Optional[torch.optim.Optimizer] = None):
+        """Save the models.
+        Args:
+            path: path to the checkpoint.
+            optim: optimizer, if provided.
+        """
+        dump = {'model': self.state_dict()}
+        if optim is not None:
+            dump['optim'] = optim.state_dict()
+        torch.save(dump, path)
+
+    def load(self, states: Dict[str, Any], optim: Optional[torch.optim.Optimizer] = None):
+        """Load from checkpoints.
+        Args:
+            states: state dict.
+            optim: optimizer, if provided.
+        """
+        self.load_state_dict(states['model'])
+        if optim is not None:
+            optim.load_state_dict(states['optim'])
