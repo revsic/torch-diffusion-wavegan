@@ -63,7 +63,7 @@ class DiffusionWaveGAN(nn.Module):
                 sample: bool = True) -> torch.Tensor:
         """Generated waveform conditioned on mel-spectrogram.
         Args:
-            mel: [torch.float32; [B, mel, T / prod(scales)]], mel-spectrogram.
+            mel: [torch.float32; [B, T / prod(scales)], mel], mel-spectrogram.
             signal: [torch.float32; [B, T]], initial noise.
             latent: [torch.float32; [B, T]], provided latent variable.
             sample: whether sample the inverse process or not.
@@ -119,7 +119,7 @@ class DiffusionWaveGAN(nn.Module):
         Args:
             signal: [torch.float32; [B, T]], input signal, z_{t}.
             latent: [torch.float32; [B, T]], latent variable.
-            mel: [torch.float32; [B, mel, T / prod(scales)]], mel-spectrogram.
+            mel: [torch.float32; [B, T / prod(scales), mel]], mel-spectrogram.
             steps: [torch.long; [B]], t, diffusion steps, zero-based.
         Returns:
             [torch.float32; [B, T]], waveform mean, z_{t - 1}
@@ -148,7 +148,7 @@ class DiffusionWaveGAN(nn.Module):
         Args:
             signal: [torch.float32; [B, T]], input signal.
             latent: [torch.float32; [B, T]], latent variable.
-            mel: [torch.float32; [B, mel, T / prod(scales)]], mel-spectrogram.
+            mel: [torch.float32; [B, T / prod(scales), mel]], mel-spectrogram.
             steps: [torch.long; [B]], diffusion steps, zero-based.
         Returns:
             [torch.float32; [B, T]], denoised waveform. 
@@ -156,7 +156,7 @@ class DiffusionWaveGAN(nn.Module):
         # [B, C, T]
         x = self.proj_signal(signal[:, None]) + self.proj_latent(latent[:, None])
         # [B, mel, T]
-        mel = self.upsampler(mel)
+        mel = self.upsampler(mel.transpose(1, 2))
         # [B, E]
         embed = self.embedder(steps)
         # L x [B, C, T]
