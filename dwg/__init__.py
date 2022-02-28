@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -60,7 +60,7 @@ class DiffusionWaveGAN(nn.Module):
                 mel: torch.Tensor,
                 signal: Optional[torch.Tensor] = None,
                 latent: Optional[torch.Tensor] = None,
-                sample: bool = True) -> torch.Tensor:
+                sample: bool = True) -> Tuple[torch.Tensor, List[np.ndarray]]:
         """Generated waveform conditioned on mel-spectrogram.
         Args:
             mel: [torch.float32; [B, T / prod(scales)], mel], mel-spectrogram.
@@ -69,12 +69,15 @@ class DiffusionWaveGAN(nn.Module):
             sample: whether sample the inverse process or not.
         Returns:
             [torch.float32; [B, T]], generated waveform.
+            [np.float32; [B, T]], intermediate representations.
         """
         # [B, T]
         signal = signal or torch.randn(
             mel.shape[0], mel.shape[-1] * np.prod(self.config.upscales),
             device=mel.device)
         latent = latent or torch.randn_like(signal)
+        # S x [B, T]
+        ir = [signal.cpu().detach().numpy()]
         # zero-based step
         for step in range(self.steps - 1, -1, -1):
             # [B, T], [B]
@@ -83,8 +86,9 @@ class DiffusionWaveGAN(nn.Module):
             # [B, T]
             signal = mean + torch.randn_like(mean) * std[:, None] \
                 if sample else mean
+            ir.append(signal.cpu().detach().numpy())
         # [B, T]
-        return signal
+        return signal, ir
 
     def diffusion(self,
                   signal: torch.Tensor,
