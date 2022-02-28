@@ -86,6 +86,30 @@ class DiffusionWaveGAN(nn.Module):
         # [B, T]
         return signal
 
+    def diffusion(self,
+                  signal: torch.Tensor,
+                  steps: torch.Tensor,
+                  next_: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Diffusion process.
+        Args:
+            signal: [torch.float32; [B, T]], input signal.
+            steps: [torch.long; [B]], t, target diffusion steps, zero-based.
+            next_: whether move single steps or multiple steps.
+                if next_, signal is z_{t - 1}, otherwise signal is z_0.
+        Returns:
+            [torch.float32; [B, T]], z_{t}, diffused mean.
+            [torch.float32; [B]], standard deviation.
+        """
+        if next_:
+            # [B], one-based sample
+            beta = self.betas[steps + 1]
+            # [B, T], [B]
+            return (1. - beta[None]).sqrt() * signal, beta.sqrt()
+        # [B], one-based sample
+        alpha_bar = self.alphas_bar[steps + 1]
+        # [B, T], [B]
+        return alpha_bar.sqrt() * signal, (1 - alpha_bar).sqrt()
+
     def inverse(self,
                 signal: torch.Tensor,
                 latent: torch.Tensor,
@@ -93,12 +117,12 @@ class DiffusionWaveGAN(nn.Module):
                 steps: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Inverse process, single step denoise.
         Args:
-            signal: [torch.float32; [B, T]], input signal.
+            signal: [torch.float32; [B, T]], input signal, z_{t}.
             latent: [torch.float32; [B, T]], latent variable.
             mel: [torch.float32; [B, mel, T / prod(scales)]], mel-spectrogram.
-            steps: [torch.long; [B]], diffusion steps, zero-based.
+            steps: [torch.long; [B]], t, diffusion steps, zero-based.
         Returns:
-            [torch.float32; [B, T]], waveform mean.
+            [torch.float32; [B, T]], waveform mean, z_{t - 1}
             [torch.float32; [B]], waveform std.
         """
         # [B, T]
