@@ -1,12 +1,14 @@
 class Config:
     """DiffusionWaveGAN configurations.
     """
-    def __init__(self, mel: int, hop: int):
+    def __init__(self, mel: int):
         """Initializer.
         Args:
             mel: spectrogram channels.
-            hop: hop lengths.
         """
+        self.mel = mel
+
+        # diffusion steps
         self.steps = 4
 
         # block
