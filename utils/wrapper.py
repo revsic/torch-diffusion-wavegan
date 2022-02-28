@@ -2,6 +2,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from config import Config
 from disc import Discriminator
@@ -86,7 +87,8 @@ class TrainingWrapper:
         # [B, S x H]
         disc_gt = self.disc(prev, gt, steps)
         # []
-        loss_d = torch.square(disc_gt - 1.).mean()
+        loss_d = F.binary_cross_entropy_with_logits(
+            disc_gt, torch.ones_like(disc_gt))
 
         # [B, S x H]
         denoised = self.model.denoise(gt, torch.randn_like(gt), mel, steps)
@@ -97,7 +99,8 @@ class TrainingWrapper:
         # [B, S x H]
         disc_pred = self.disc(pred, gt, steps)
         # []
-        loss_g = torch.square(disc_pred).mean()
+        loss_g = F.binary_cross_entropy_with_logits(
+            disc_pred, torch.zeros_like(disc_pred))
         # least square loss
         loss = loss_d + loss_g
         losses = {
@@ -134,7 +137,8 @@ class TrainingWrapper:
         # [B, S x H]
         disc_pred = self.disc(pred, gt, steps)
         # []
-        loss = torch.square(disc_pred - 1.).mean()
+        loss = F.binary_cross_entropy_with_logits(
+            disc_pred, torch.ones_like(disc_pred))
         losses = {'gloss': loss.item()}
         return loss, losses, {
             'gt': gt.cpu().detach().numpy(),
