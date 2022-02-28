@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import torch
 import torch.nn as nn
@@ -20,6 +20,16 @@ class DiffusionWaveGAN(nn.Module):
         super().__init__()
         self.proj_signal = nn.utils.weight_norm(
             nn.Conv1d(1, config.channels, 1))
+        self.proj_latent = nn.Sequential(
+            nn.Conv1d(1, config.mapchannels, 1), nn.SiLU(),
+            *[
+                nn.Sequential(
+                    nn.Conv1d(
+                        config.mapchannels, config.mapchannels, config.mapkernels,
+                        padding=config.mapkernels // 2),
+                    nn.SiLU())
+                for _ in range(config.maplayers - 1)],
+            nn.Conv1d(config.mapchannels, config.channels, 1))
 
         self.embedder = Embedder(
             config.pe, config.embeddings, config.steps, config.mappings)
@@ -42,18 +52,20 @@ class DiffusionWaveGAN(nn.Module):
 
     def denoise(self,
                 signal: torch.Tensor,
+                latent: torch.Tensor,
                 mel: torch.Tensor,
                 steps: torch.Tensor) -> torch.Tensor:
         """Denoised waveform conditioned on mel-spectrogram.
         Args:
             signal: [torch.float32; [B, T]], input signal.
+            latent: [torch.float32; [B, T]], latent variable.
             mel: [torch.float32; [B, mel, T / prod(scales)]], mel-spectrogram.
             steps: [torch.long; [B]], diffusion steps.
         Returns:
             [torch.float32; [B, T]], denoised waveform. 
         """
         # [B, C, T]
-        x = self.proj_signal(signal[:, None])
+        x = self.proj_signal(signal[:, None]) + self.proj_latent(latent[:, None])
         # [B, mel, T]
         mel = self.upsampler(mel)
         # [B, E]

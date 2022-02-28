@@ -19,6 +19,11 @@ class Config:
         self.embeddings = 512
         self.mappings = 2
 
+        # latent mapper
+        self.mapchannels = 8
+        self.mapkernels = 5
+        self.maplayers = 2
+
         # upsampler
         self.upkernels = 5
         self.upscales = [4, 4, 4, 4]
