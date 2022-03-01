@@ -137,16 +137,16 @@ class Trainer:
                             'train/gt', self.mel_img(speech), step)
                         self.train_log.add_image(
                             # [3, M, T]
-                            'train/q(z_{t}|z_{0})', self.mel_img(aux_d['gt'][Trainer.LOG_IDX]), step)
+                            'train/q(z_{t-1}|z_{0})', self.mel_img(aux_d['prev'][Trainer.LOG_IDX]), step)
                         self.train_log.add_image(
                             # [3, M, T]
-                            'train/q(z_{t-1}|z_{t})', self.mel_img(aux_d['prev'][Trainer.LOG_IDX]), step)
+                            'train/q(z_{t}|z_{t-1})', self.mel_img(aux_d['base'][Trainer.LOG_IDX]), step)
                         self.train_log.add_image(
                             # [3, M, T]
                             'train/p(z_{0}|z_{t})', self.mel_img(aux_d['denoised'][Trainer.LOG_IDX]), step)
                         self.train_log.add_image(
                             # [3, M, T]
-                            'train/q(z_{t-1}|z_{0})', self.mel_img(aux_d['pred'][Trainer.LOG_IDX]), step)
+                            'train/p(z_{t-1}|z_{0})', self.mel_img(aux_d['pred'][Trainer.LOG_IDX]), step)
 
             losses = {
                 key: [] for key in {**losses_d, **losses_g}}
@@ -205,11 +205,11 @@ class Trainer:
         # minmax norm in range(0, 1)
         mel = (mel - mel.min()) / (mel.max() - mel.min() + 1e-7)
         # in range(0, 255)
-        mel = (mel * 255).astype(np.long)
+        mel = (mel * 255).astype(np.uint8)
         # [T, M, 3]
         mel = self.cmap[mel]
         # [3, M, T], make origin lower
-        mel = np.flip(mel, axis=0).transpose(2, 1, 0)
+        mel = np.flip(mel, axis=1).transpose(2, 1, 0)
         return mel
 
 
