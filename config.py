@@ -14,8 +14,8 @@ class TrainConfig:
         """
         # optimizer
         self.learning_rate = 1e-4
-        self.beta1 = 0.9
-        self.beta2 = 0.999
+        self.beta1 = 0.5
+        self.beta2 = 0.9
 
         # 13000:100
         self.split = 13000
