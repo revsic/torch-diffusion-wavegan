@@ -50,7 +50,8 @@ class DiffusionWaveGAN(nn.Module):
             nn.ReLU(),
             nn.utils.weight_norm(nn.Conv1d(config.channels, config.channels, 1)),
             nn.ReLU(),
-            nn.utils.weight_norm(nn.Conv1d(config.channels, 1, 1)))
+            nn.utils.weight_norm(nn.Conv1d(config.channels, 1, 1)),
+            nn.Tanh())
         # [S + 1], 0 ~ S
         self.register_buffer('betas', torch.tensor(config.betas(), dtype=torch.float32))
         self.register_buffer('alphas', 1. - self.betas)
