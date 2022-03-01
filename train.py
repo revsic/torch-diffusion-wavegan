@@ -162,33 +162,27 @@ class Trainer:
                 for key, val in losses.items():
                     self.test_log.add_scalar(f'loss/{key}', np.mean(val), step)
 
-                self.model.eval()
                 # wrap last bunch
                 mel, speech, mellen, speechlen = bunch
-                # [T x H]
+                # [T x H], gt plot
                 speech = speech[Trainer.LOG_IDX, :speechlen[Trainer.LOG_IDX]]
-                self.test_log.add_image(
-                    'test/gt', self.mel_img(speech), step)
+                self.test_plot('gt', speech, step)
+
+                # inference
+                self.model.eval()
                 # [T, mel]
                 mel = mel[Trainer.LOG_IDX, :mellen[Trainer.LOG_IDX]]
                 # [1, T x H]
-                _, ir = self.model(torch.tensor(mel[None], device=device))
-                self.test_log.add_image(
-                    f'test/z_{{{self.config.model.steps}}}',
-                    self.mel_img(ir[0].squeeze(0)), step)
-                self.test_log.add_audio(
-                    f'test/z_{{{self.config.model.steps}}}', 
-                    ir[0], step, sample_rate=self.config.data.sr)
-
-                for i, signal in enumerate(ir[1:][::-1]):
-                    self.test_log.add_image(
-                        f'test/p(z_{{{i}}}|z_{{{i + 1}}}))',
-                        self.mel_img(signal.squeeze(0)), step)
-                    self.test_log.add_audio(
-                        f'test/p(z_{{{i}}}|z_{{{i + 1}}}))', signal, step,
-                        sample_rate=self.config.data.sr)
-
+                _, [noise, *ir] = self.model(torch.tensor(mel[None], device=device))
                 self.model.train()
+
+                # noise plot
+                self.test_plot(
+                    f'z_{{{self.config.model.steps}}}', noise.squeeze(0), step)
+                # intermediate representation
+                for i, signal in enumerate(ir[::-1]):
+                    self.test_plot(
+                        f'p(z_{{{i}}}|z_{{{i + 1}}}))', signal.squeeze(0), step)
 
             self.model.save(f'{self.ckpt_path}_{epoch}.ckpt', self.optim_g)
             self.disc.save(f'{self.ckpt_path}_{epoch}.ckpt-disc', self.optim_d)
@@ -211,6 +205,18 @@ class Trainer:
         # [3, M, T], make origin lower
         mel = np.flip(mel, axis=1).transpose(2, 1, 0)
         return mel
+
+    def test_plot(self, name: str, signal: np.ndarray, step: int):
+        """Plot signals.
+        Args:
+            name: plot name.
+            signal: [np.float32; [T]], audio signal.
+            step: current training steps.
+        """
+        self.test_log.add_image(
+            f'test/image/{name}', self.mel_img(signal), step)
+        self.test_log.add_audio(
+            f'test/audio/{name}', signal[None], step, sample_rate=self.config.data.sr)
 
 
 if __name__ == '__main__':
