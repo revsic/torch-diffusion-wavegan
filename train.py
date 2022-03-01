@@ -203,7 +203,7 @@ class Trainer:
         # [T, M]
         mel = self.melspec(signal)
         # minmax norm in range(0, 1)
-        mel = (mel - mel.min()) / (mel.max() - mel.min())
+        mel = (mel - mel.min()) / (mel.max() - mel.min() + 1e-7)
         # in range(0, 255)
         mel = (mel * 255).astype(np.long)
         # [T, M, 3]
