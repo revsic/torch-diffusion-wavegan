@@ -50,6 +50,6 @@ class Config:
         betas = 1 - np.exp(
             -self.beta_min / self.steps - 0.5 * (
                 self.beta_max - self.beta_min
-            ) * (2 * steps - 1) * self.steps ** 2)
+            ) * (2 * steps - 1) * self.steps ** -2)
         # [S + 1]
         return np.concatenate([[0.], betas])
