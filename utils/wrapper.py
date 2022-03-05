@@ -134,11 +134,7 @@ class TrainingWrapper:
         steps = torch.randint(
             self.config.model.steps, (mel.shape[0],), device=mel.device)
         # [B, S x H], [B]
-        prev_mean, prev_std = self.model.diffusion(speech, steps - 1)
-        # [B, S x H]
-        prev = prev_mean + torch.randn_like(prev_mean) * prev_std[:, None]
-        # [B, S x H], [B]
-        base_mean, base_std = self.model.diffusion(prev, steps, next_=True)
+        base_mean, base_std = self.model.diffusion(speech, steps)
         # [B, S x H]
         base = base_mean + torch.randn_like(base_mean) * base_std[:, None]
         # [B, S x H]
@@ -153,13 +149,12 @@ class TrainingWrapper:
         gloss = F.binary_cross_entropy_with_logits(
             disc_pred, torch.ones_like(disc_pred))
         # []
-        spec_loss = F.mse_loss(self.spec(prev), self.spec(pred))
+        spec_loss = F.mse_loss(self.spec(speech), self.spec(denoised))
         # []
         loss = gloss + spec_loss
         losses = {'gloss': gloss.item(), 'spec-loss': spec_loss.item()}
         return loss, losses, {
             'base': base.cpu().detach().numpy(),
-            'prev': prev.cpu().detach().numpy(),
             'denoised': denoised.cpu().detach().numpy(),
             'pred': pred.cpu().detach().numpy()}
 
