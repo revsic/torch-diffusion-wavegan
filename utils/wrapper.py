@@ -1,5 +1,6 @@
 from typing import Dict, List, Tuple
 
+import librosa
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -28,6 +29,14 @@ class TrainingWrapper:
         self.disc = disc
         self.config = config
         self.device = device
+        # stft loss preparation
+        # [win]
+        self.hann = torch.hann_window(config.data.win, device=device)
+        # [fft // 2 + 1, mel]
+        self.filterbank = torch.tensor(
+            librosa.filters.mel(
+                config.data.sr, config.data.fft, config.data.mel, config.data.fmin, config.data.fmax),
+            device=device).T
 
     def wrap(self, bunch: List[np.ndarray]) -> List[torch.Tensor]:
         """Wrap the array to torch tensor.
@@ -125,7 +134,11 @@ class TrainingWrapper:
         steps = torch.randint(
             self.config.model.steps, (mel.shape[0],), device=mel.device)
         # [B, S x H], [B]
-        base_mean, base_std = self.model.diffusion(speech, steps)
+        prev_mean, prev_std = self.model.diffusion(speech, steps - 1)
+        # [B, S x H]
+        prev = prev_mean + torch.randn_like(prev_mean) * prev_std[:, None]
+        # [B, S x H], [B]
+        base_mean, base_std = self.model.diffusion(prev, steps, next_=True)
         # [B, S x H]
         base = base_mean + torch.randn_like(base_mean) * base_std[:, None]
         # [B, S x H]
@@ -137,10 +150,31 @@ class TrainingWrapper:
         # [B, S x H]
         disc_pred = self.disc(pred, base, steps)
         # []
-        loss = F.binary_cross_entropy_with_logits(
+        gloss = F.binary_cross_entropy_with_logits(
             disc_pred, torch.ones_like(disc_pred))
-        losses = {'gloss': loss.item()}
+        # []
+        spec_loss = F.mse_loss(self.spec(prev), self.spec(pred))
+        # []
+        loss = gloss + spec_loss
+        losses = {'gloss': gloss.item(), 'spec-loss': spec_loss.item()}
         return loss, losses, {
             'base': base.cpu().detach().numpy(),
+            'prev': prev.cpu().detach().numpy(),
             'denoised': denoised.cpu().detach().numpy(),
             'pred': pred.cpu().detach().numpy()}
+
+    def spec(self, signal: torch.Tensor) -> torch.Tensor:
+        """Generate spectrogram.
+        Args:
+            signal: [torch.float32; [B, T]], input signal.
+        Returns:
+            [torch.float32; [B, T // hop, mel]], mel spectrogram.
+        """
+        # [B, fft // 2 + 1, T // hop, 2]
+        stft = torch.stft(
+            signal, self.config.data.fft, self.config.data.hop, self.config.data.win, self.hann)
+        # [B, fft // 2 + 1, T // hop]
+        # , add epsilon since derivatives of square root does not exist on zero
+        power = torch.sqrt(stft.square().sum(dim=-1) + 1e-7)
+        # [B, T // hop, mel]
+        return torch.matmul(power.transpose(1, 2), self.filterbank)
