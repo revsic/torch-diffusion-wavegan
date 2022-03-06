@@ -99,14 +99,9 @@ class TrainingWrapper:
         base = base_mean + torch.randn_like(base_mean) * base_std[:, None]
         # [B, S x H]
         disc_gt = self.disc(prev, base, steps)
-        # [B]
-        loss_d = F.binary_cross_entropy_with_logits(
-            disc_gt, torch.ones_like(disc_gt), reduction='none').mean(dim=-1)
-        # since `steps` is zero-based and `snr` is one-based
-        # ,  t equals with `steps + 1` for discrete vdm coefficient `SNR[t - 1] - SNR[t]`.
-        loss_d = 0.5 * self.model.steps * (snr[steps] - snr[steps + 1]) * loss_d
         # []
-        loss_d = loss_d.mean()
+        loss_d = F.binary_cross_entropy_with_logits(
+            disc_gt, torch.ones_like(disc_gt))
 
         # [B, S x H]
         denoised = self.model.denoise(base, mel, steps)
@@ -116,12 +111,9 @@ class TrainingWrapper:
         pred = pred_mean + torch.randn_like(pred_mean) * pred_std[:, None]
         # [B, S x H]
         disc_pred = self.disc(pred, base, steps)
-        # [B]
-        loss_g = F.binary_cross_entropy_with_logits(
-            disc_pred, torch.zeros_like(disc_pred), reduction='none').mean(dim=-1)
-        loss_g = 0.5 * self.model.steps * (snr[steps] - snr[steps + 1]) * loss_g
         # []
-        loss_g = loss_g.mean()
+        loss_g = F.binary_cross_entropy_with_logits(
+            disc_pred, torch.zeros_like(disc_pred))
         # least square loss
         loss = loss_d + loss_g
         losses = {
@@ -161,12 +153,9 @@ class TrainingWrapper:
         pred = pred_mean + torch.randn_like(pred_mean) * pred_std[:, None]
         # [B, S x H]
         disc_pred = self.disc(pred, base, steps)
-        # [B]
-        gloss = F.binary_cross_entropy_with_logits(
-            disc_pred, torch.ones_like(disc_pred), reduction='none').mean(dim=-1)
-        gloss = 0.5 * self.model.steps * (snr[steps] - snr[steps + 1]) * gloss
         # []
-        gloss = gloss.mean()
+        gloss = F.binary_cross_entropy_with_logits(
+            disc_pred, torch.ones_like(disc_pred))
         # []
         spec_loss = F.mse_loss(self.spec(speech), self.spec(denoised))
         # [1 + S]
