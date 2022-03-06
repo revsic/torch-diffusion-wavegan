@@ -82,6 +82,10 @@ class TrainingWrapper:
         Returns:
             loss and disctionaries.
         """
+        # [1 + S]
+        logsnr, _ = self.model.scheduler()
+        # [1 + S]
+        snr = torch.exp(logsnr)
         # [B], zero-based
         steps = torch.randint(
             self.config.model.steps, (mel.shape[0],), device=mel.device)
@@ -95,21 +99,29 @@ class TrainingWrapper:
         base = base_mean + torch.randn_like(base_mean) * base_std[:, None]
         # [B, S x H]
         disc_gt = self.disc(prev, base, steps)
-        # []
+        # [B]
         loss_d = F.binary_cross_entropy_with_logits(
-            disc_gt, torch.ones_like(disc_gt))
+            disc_gt, torch.ones_like(disc_gt), reduction='none').mean(dim=-1)
+        # since `steps` is zero-based and `snr` is one-based
+        # ,  t equals with `steps + 1` for discrete vdm coefficient `SNR[t - 1] - SNR[t]`.
+        loss_d = 0.5 * self.model.steps * (snr[steps] - snr[steps + 1]) * loss_d
+        # []
+        loss_d = loss_d.mean()
 
         # [B, S x H]
-        denoised = self.model.denoise(base, torch.randn_like(base), mel, steps)
+        denoised = self.model.denoise(base, mel, steps)
         # [B, S x H], [B]
         pred_mean, pred_std = self.model.diffusion(denoised, steps - 1)
         # [B, S x H]
         pred = pred_mean + torch.randn_like(pred_mean) * pred_std[:, None]
         # [B, S x H]
         disc_pred = self.disc(pred, base, steps)
-        # []
+        # [B]
         loss_g = F.binary_cross_entropy_with_logits(
-            disc_pred, torch.zeros_like(disc_pred))
+            disc_pred, torch.zeros_like(disc_pred), reduction='none').mean(dim=-1)
+        loss_g = 0.5 * self.model.steps * (snr[steps] - snr[steps + 1]) * loss_g
+        # []
+        loss_g = loss_g.mean()
         # least square loss
         loss = loss_d + loss_g
         losses = {
@@ -130,6 +142,10 @@ class TrainingWrapper:
         Returns:
             loss and disctionaries.
         """
+        # [1 + S]
+        logsnr, _ = self.model.scheduler()
+        # [1 + S]
+        snr = torch.exp(logsnr)
         # [B], zero-based
         steps = torch.randint(
             self.config.model.steps, (mel.shape[0],), device=mel.device)
@@ -138,25 +154,38 @@ class TrainingWrapper:
         # [B, S x H]
         base = base_mean + torch.randn_like(base_mean) * base_std[:, None]
         # [B, S x H]
-        denoised = self.model.denoise(base, torch.randn_like(base), mel, steps)
+        denoised = self.model.denoise(base, mel, steps)
         # [B, S x H], [B]
         pred_mean, pred_std = self.model.diffusion(denoised, steps - 1)
         # [B, S x H]
         pred = pred_mean + torch.randn_like(pred_mean) * pred_std[:, None]
         # [B, S x H]
         disc_pred = self.disc(pred, base, steps)
-        # []
+        # [B]
         gloss = F.binary_cross_entropy_with_logits(
-            disc_pred, torch.ones_like(disc_pred))
+            disc_pred, torch.ones_like(disc_pred), reduction='none').mean(dim=-1)
+        gloss = 0.5 * self.model.steps * (snr[steps] - snr[steps + 1]) * gloss
+        # []
+        gloss = gloss.mean()
         # []
         spec_loss = F.mse_loss(self.spec(speech), self.spec(denoised))
+        # [1 + S]
+        alphas_bar = torch.sigmoid(logsnr)
+        # [], prior loss
+        schedule_loss = torch.log(
+            torch.clamp_min(1 - alphas_bar[-1], 1e-7)) + torch.log(
+                torch.clamp_min(alphas_bar[0], 1e-7))
         # []
-        loss = gloss + spec_loss
-        losses = {'gloss': gloss.item(), 'spec-loss': spec_loss.item()}
+        loss = gloss + spec_loss - schedule_loss
+        losses = {
+            'gloss': gloss.item(),
+            'spec-loss': spec_loss.item(),
+            'schedule-loss': schedule_loss.item()}
         return loss, losses, {
             'base': base.cpu().detach().numpy(),
             'denoised': denoised.cpu().detach().numpy(),
-            'pred': pred.cpu().detach().numpy()}
+            'pred': pred.cpu().detach().numpy(),
+            'alphas_bar': alphas_bar.cpu().detach().numpy()}
 
     def spec(self, signal: torch.Tensor) -> torch.Tensor:
         """Generate spectrogram.

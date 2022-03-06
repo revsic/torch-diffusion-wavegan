@@ -15,8 +15,9 @@ class Config:
         self.steps = 4
 
         # schedules
-        self.beta_max = 20
-        self.beta_min = 0.1
+        self.internals = 1024
+        self.logit_max = 10
+        self.logit_min = -10
 
         # block
         self.channels = 64

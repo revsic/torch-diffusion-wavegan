@@ -6,6 +6,7 @@ import torch.nn as nn
 
 from .config import Config
 from .embedder import Embedder
+from .scheduler import Scheduler
 from .upsampler import Upsampler
 from .wavenet import WaveNetBlock
 
@@ -22,16 +23,6 @@ class DiffusionWaveGAN(nn.Module):
         self.steps = config.steps
         self.proj_signal = nn.utils.weight_norm(
             nn.Conv1d(1, config.channels, 1))
-        self.proj_latent = nn.Sequential(
-            nn.Conv1d(1, config.mapchannels, 1), nn.SiLU(),
-            *[
-                nn.Sequential(
-                    nn.Conv1d(
-                        config.mapchannels, config.mapchannels, config.mapkernels,
-                        padding=config.mapkernels // 2),
-                    nn.SiLU())
-                for _ in range(config.maplayers - 1)],
-            nn.Conv1d(config.mapchannels, config.channels, 1))
 
         self.embedder = Embedder(
             config.pe, config.embeddings, config.steps, config.mappings)
@@ -52,22 +43,18 @@ class DiffusionWaveGAN(nn.Module):
             nn.ReLU(),
             nn.utils.weight_norm(nn.Conv1d(config.channels, 1, 1)),
             nn.Tanh())
-        # [S + 1], 0 ~ S
-        self.register_buffer('betas', torch.tensor(config.betas(), dtype=torch.float32))
-        self.register_buffer('alphas', 1. - self.betas)
-        self.register_buffer('alphas_bar', torch.cumprod(self.alphas, dim=-1))
+
+        self.scheduler = Scheduler(
+            config.steps, config.internals, config.logit_min, config.logit_max)
 
     def forward(self,
                 mel: torch.Tensor,
-                signal: Optional[torch.Tensor] = None,
-                latent: Optional[torch.Tensor] = None,
-                sample: bool = True) -> Tuple[torch.Tensor, List[np.ndarray]]:
+                signal: Optional[torch.Tensor] = None) \
+            -> Tuple[torch.Tensor, List[np.ndarray]]:
         """Generated waveform conditioned on mel-spectrogram.
         Args:
             mel: [torch.float32; [B, T / prod(scales)], mel], mel-spectrogram.
             signal: [torch.float32; [B, T]], initial noise.
-            latent: [torch.float32; [B, T]], provided latent variable.
-            sample: whether sample the inverse process or not.
         Returns:
             [torch.float32; [B, T]], generated waveform.
             [np.float32; [B, T]], intermediate representations.
@@ -76,17 +63,15 @@ class DiffusionWaveGAN(nn.Module):
         # [B, T]
         signal = signal or torch.randn(
             mel.shape[0], mel.shape[1] * factor, device=mel.device)
-        latent = latent or torch.randn_like(signal)
         # S x [B, T]
         ir = [signal.cpu().detach().numpy()]
         # zero-based step
         for step in range(self.steps - 1, -1, -1):
             # [B, T], [B]
             mean, std = self.inverse(
-                signal, latent, mel, torch.tensor([step], device=mel.device))
+                signal, mel, torch.tensor([step], device=mel.device))
             # [B, T]
-            signal = mean + torch.randn_like(mean) * std[:, None] \
-                if sample else mean
+            signal = mean + torch.randn_like(mean) * std[:, None]
             ir.append(signal.cpu().detach().numpy())
         # [B, T]
         return signal, ir
@@ -105,61 +90,64 @@ class DiffusionWaveGAN(nn.Module):
             [torch.float32; [B, T]], z_{t}, diffused mean.
             [torch.float32; [B]], standard deviation.
         """
+        # [S + 1]
+        logsnr, betas = self.scheduler()
         if next_:
             # [B], one-based sample
-            beta = self.betas[steps + 1]
+            beta = betas[steps + 1]
             # [B, T], [B]
             return (1. - beta[:, None]).sqrt() * signal, beta.sqrt()
+        # [S + 1]
+        alphas_bar = torch.sigmoid(logsnr)
         # [B], one-based sample
-        alpha_bar = self.alphas_bar[steps + 1]
+        alpha_bar = alphas_bar[steps + 1]
         # [B, T], [B]
         return alpha_bar[:, None].sqrt() * signal, (1 - alpha_bar).sqrt()
 
     def inverse(self,
                 signal: torch.Tensor,
-                latent: torch.Tensor,
                 mel: torch.Tensor,
                 steps: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Inverse process, single step denoise.
         Args:
             signal: [torch.float32; [B, T]], input signal, z_{t}.
-            latent: [torch.float32; [B, T]], latent variable.
             mel: [torch.float32; [B, T / prod(scales), mel]], mel-spectrogram.
             steps: [torch.long; [B]], t, diffusion steps, zero-based.
         Returns:
             [torch.float32; [B, T]], waveform mean, z_{t - 1}
             [torch.float32; [B]], waveform std.
         """
+        # [S + 1]
+        logsnr, betas = self.scheduler()
+        # [S + 1]
+        alphas, alphas_bar = 1. - betas, torch.sigmoid(logsnr)
         # [B, T]
-        denoised = self.denoise(signal, latent, mel, steps)
+        denoised = self.denoise(signal, mel, steps)
         # [B], make one-based
         prev, steps = steps, steps + 1
         # [B, T]
-        mean = self.alphas_bar[prev, None].sqrt() * self.betas[steps, None] / (
-                1 - self.alphas_bar[steps, None]) * denoised + \
-            self.alphas[steps, None].sqrt() * (1. - self.alphas_bar[prev, None]) / (
-                1 - self.alphas_bar[steps, None]) * signal
+        mean = alphas_bar[prev, None].sqrt() * betas[steps, None] / (
+                1 - alphas_bar[steps, None]) * denoised + \
+            alphas[steps, None].sqrt() * (1. - alphas_bar[prev, None]) / (
+                1 - alphas_bar[steps, None]) * signal
         # [B]
-        var = (1 - self.alphas_bar[prev]) / (
-            1 - self.alphas_bar[steps]) * self.betas[steps]
+        var = (1 - alphas_bar[prev]) / (1 - alphas_bar[steps]) * betas[steps]
         return mean, var.sqrt()
 
     def denoise(self,
                 signal: torch.Tensor,
-                latent: torch.Tensor,
                 mel: torch.Tensor,
                 steps: torch.Tensor) -> torch.Tensor:
         """Denoise waveform conditioned on mel-spectrogram.
         Args:
             signal: [torch.float32; [B, T]], input signal.
-            latent: [torch.float32; [B, T]], latent variable.
             mel: [torch.float32; [B, T / prod(scales), mel]], mel-spectrogram.
             steps: [torch.long; [B]], diffusion steps, zero-based.
         Returns:
             [torch.float32; [B, T]], denoised waveform. 
         """
         # [B, C, T]
-        x = self.proj_signal(signal[:, None]) + self.proj_latent(latent[:, None])
+        x = self.proj_signal(signal[:, None])
         # [B, mel, T]
         mel = self.upsampler(mel.transpose(1, 2))
         # [B, E]
@@ -172,7 +160,7 @@ class DiffusionWaveGAN(nn.Module):
             skips = skips + skip
         # [B, T]
         return self.proj_out(
-                skips * (len(self.blocks) ** -0.5)).squeeze(dim=1)
+            skips * (len(self.blocks) ** -0.5)).squeeze(dim=1)
 
     def save(self, path: str, optim: Optional[torch.optim.Optimizer] = None):
         """Save the models.

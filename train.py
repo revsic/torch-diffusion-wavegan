@@ -94,7 +94,7 @@ class Trainer:
                 for it, bunch in enumerate(self.loader):
                     mel, speech = self.wrapper.wrap(
                         self.wrapper.random_segment(bunch))
-                    loss_g, losses_g, _ = \
+                    loss_g, losses_g, aux_g = \
                         self.wrapper.loss_generator(mel, speech)
                     # update
                     self.optim_g.zero_grad()
@@ -147,7 +147,11 @@ class Trainer:
                         self.train_log.add_image(
                             # [3, M, T]
                             'train/p(z_{t-1}|z_{0})', self.mel_img(aux_d['pred'][Trainer.LOG_IDX]), step)
-
+                        # scheduler plot
+                        fig = plt.figure()
+                        ax = fig.add_subplot(1, 1, 1)
+                        ax.plot(aux_g['alphas_bar'])
+                        self.train_log.add_figure('train/alphas_bar', fig, step)
             losses = {
                 key: [] for key in {**losses_d, **losses_g}}
             with torch.no_grad():
