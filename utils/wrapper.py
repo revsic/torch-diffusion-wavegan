@@ -98,7 +98,7 @@ class TrainingWrapper:
         # [B, S x H]
         base = base_mean + torch.randn_like(base_mean) * base_std[:, None]
         # [B, S x H]
-        disc_gt = self.disc(prev, base, steps)
+        disc_gt = self.disc(prev, base, mel, steps)
         # []
         loss_d = F.binary_cross_entropy_with_logits(
             disc_gt, torch.ones_like(disc_gt))
@@ -110,7 +110,7 @@ class TrainingWrapper:
         # [B, S x H]
         pred = pred_mean + torch.randn_like(pred_mean) * pred_std[:, None]
         # [B, S x H]
-        disc_pred = self.disc(pred, base, steps)
+        disc_pred = self.disc(pred, base, mel, steps)
         # []
         loss_g = F.binary_cross_entropy_with_logits(
             disc_pred, torch.zeros_like(disc_pred))
@@ -152,7 +152,7 @@ class TrainingWrapper:
         # [B, S x H]
         pred = pred_mean + torch.randn_like(pred_mean) * pred_std[:, None]
         # [B, S x H]
-        disc_pred = self.disc(pred, base, steps)
+        disc_pred = self.disc(pred, base, mel, steps)
         # []
         gloss = F.binary_cross_entropy_with_logits(
             disc_pred, torch.ones_like(disc_pred))

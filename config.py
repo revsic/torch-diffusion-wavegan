@@ -50,7 +50,7 @@ class Config:
         self.data = DataConfig(batch=None)
         self.train = TrainConfig(self.data.sr, self.data.hop)
         self.model = ModelConfig(self.data.mel)
-        self.disc = DiscConfig(self.model.steps)
+        self.disc = DiscConfig(self.data.mel, self.model.steps)
 
     def dump(self):
         """Dump configurations into serializable dictionary.
