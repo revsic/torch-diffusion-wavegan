@@ -2,6 +2,7 @@ from typing import Any, Dict, Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from dwg.embedder import Embedder
 
@@ -17,22 +18,21 @@ class Discriminator(nn.Module):
             config: model configurations.
         """
         super().__init__()
+        self.leak = config.leak
         self.proj_signal = nn.utils.weight_norm(
             nn.Conv1d(2, config.channels, 1))
-        self.embedder = nn.Sequential(
-            Embedder(
-                config.pe, config.embeddings, config.steps, config.mappers),
-            nn.Linear(config.embeddings, config.channels))
+        self.embedder = Embedder(
+                config.pe, config.embeddings, config.steps, config.mappers)
 
-        self.disc = nn.Sequential(
-            *[
-                nn.Sequential(
-                    nn.utils.weight_norm(nn.Conv1d(
-                        config.channels, config.channels, config.kernels,
-                        padding=(config.kernels - 1) * i // 2, dilation=i)),
-                    nn.LeakyReLU(config.leak))
-                for i in range(1, config.layers + 1)],
-            nn.utils.weight_norm(nn.Conv1d(config.channels, 1, 1)))
+        self.disc = nn.ModuleList([
+            nn.ModuleList([
+                nn.Linear(config.embeddings, config.channels),
+                nn.utils.weight_norm(nn.Conv1d(
+                    config.channels, config.channels, config.kernels,
+                    padding=(config.kernels - 1) * i // 2, dilation=i))])
+            for i in range(1, config.layers + 1)])
+        
+        self.proj_out = nn.utils.weight_norm(nn.Conv1d(config.channels, 1, 1))
 
     def forward(self,
                 prev: torch.Tensor,
@@ -48,8 +48,13 @@ class Discriminator(nn.Module):
         """
         # [B, C, T]
         x = self.proj_signal(torch.stack([prev, signal], dim=1))
+        # [B, E]
+        embed = self.embedder(steps)
+        for proj_embed, conv in self.disc:
+            # [B, C, T]
+            x = F.leaky_relu(conv(x + proj_embed(embed)[..., None]), self.leak)
         # [B, T]
-        return self.disc(x + self.embedder(steps)[..., None]).squeeze(1)
+        return self.proj_out(x).squeeze(1)
 
     def save(self, path: str, optim: Optional[torch.optim.Optimizer] = None):
         """Save the models.
